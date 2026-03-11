@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { useWizard, type LlmProvider, type TestResult } from "@/store/wizard";
 import {
   CheckCircle2,
@@ -11,40 +10,11 @@ import {
   ArrowLeft,
   Eye,
   EyeOff,
+  ChevronRight,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-
-const PROVIDERS: { id: LlmProvider; name: string; desc: string; tag: string; keyHint: string }[] = [
-  {
-    id: "claude",
-    name: "Claude",
-    desc: "最强大脑 · 复杂推理首选",
-    tag: "Anthropic",
-    keyHint: "Anthropic API Key (sk-ant-...)",
-  },
-  {
-    id: "deepseek",
-    name: "DeepSeek 直连",
-    desc: "直连官方 API · 填 DeepSeek Key",
-    tag: "推荐",
-    keyHint: "DeepSeek API Key (sk-...)",
-  },
-  {
-    id: "deepseek_or",
-    name: "DeepSeek 免费",
-    desc: "经由 OpenRouter · 有免费额度",
-    tag: "免费",
-    keyHint: "OpenRouter API Key (sk-or-...)",
-  },
-  {
-    id: "minimax",
-    name: "Minimax",
-    desc: "中文语境专家 · 高并发长文本",
-    tag: "国内优化",
-    keyHint: "Minimax API Key",
-  },
-];
+import { useT } from "@/i18n";
 
 export function Step2_Model() {
   const {
@@ -61,7 +31,39 @@ export function Step2_Model() {
     back,
   } = useWizard();
 
+  const t = useT();
   const [showKey, setShowKey] = useState(false);
+
+  const PROVIDERS: { id: LlmProvider; name: string; desc: string; tag: string; keyHint: string }[] = [
+    {
+      id: "claude",
+      name: "Claude",
+      desc: t("model.claude.desc"),
+      tag: t("model.tag.anthropic"),
+      keyHint: "Anthropic API Key (sk-ant-...)",
+    },
+    {
+      id: "deepseek",
+      name: t("model.deepseek.name"),
+      desc: t("model.deepseek.desc"),
+      tag: t("model.tag.recommended"),
+      keyHint: "DeepSeek API Key (sk-...)",
+    },
+    {
+      id: "deepseek_or",
+      name: t("model.deepseekOr.name"),
+      desc: t("model.deepseekOr.desc"),
+      tag: t("model.tag.free"),
+      keyHint: "OpenRouter API Key (sk-or-...)",
+    },
+    {
+      id: "minimax",
+      name: "Minimax",
+      desc: t("model.minimax.desc"),
+      tag: t("model.tag.cnOptimized"),
+      keyHint: "Minimax API Key",
+    },
+  ];
 
   const testConnection = async () => {
     if (!llmApiKey.trim()) return;
@@ -91,109 +93,116 @@ export function Step2_Model() {
   const canAdvance = llmTestResult?.ok === true;
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 gap-4">
+    <div className="flex flex-col flex-1 min-h-0 gap-5">
+      {/* Section header */}
       <div>
-        <h2 className="text-lg font-semibold">模型配置</h2>
-        <p className="text-sm text-[hsl(var(--muted-foreground))] mt-0.5">
-          选择 AI 提供商并填入 API Key
+        <h2 className="text-[20px] font-semibold tracking-tight">{t("model.title")}</h2>
+        <p className="text-[15px] text-[hsl(var(--muted-foreground))] mt-1">
+          {t("model.subtitle")}
         </p>
       </div>
 
-      {/* Provider selector */}
-      <div className="grid grid-cols-2 gap-2">
+      {/* Provider selector — Apple grouped list */}
+      <div className="apple-group">
         {PROVIDERS.map((p) => (
           <button
             key={p.id}
             onClick={() => setLlmProvider(p.id)}
             className={cn(
-              "rounded-lg border p-3 text-left transition-all",
+              "apple-row w-full cursor-pointer transition-colors",
               llmProvider === p.id
-                ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.08)]"
-                : "border-[hsl(var(--border))] bg-[hsl(var(--card))] hover:border-[hsl(var(--primary)/0.5)]"
+                ? "bg-[hsl(var(--primary))]/[0.06]"
+                : "hover:bg-[hsl(var(--background))]"
             )}
           >
-            <div className="flex items-start justify-between gap-1 mb-1">
-              <span className="text-sm font-medium">{p.name}</span>
-              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]">
-                {p.tag}
-              </span>
+            <div className="flex items-center gap-3.5">
+              <div className={cn(
+                "w-[34px] h-[34px] rounded-[8px] flex items-center justify-center text-[13px] font-bold text-white",
+                p.id === "claude" ? "bg-[#d97706]" :
+                p.id === "deepseek" ? "bg-[hsl(var(--primary))]" :
+                p.id === "deepseek_or" ? "bg-[hsl(var(--success))]" :
+                "bg-[#8b5cf6]"
+              )}>
+                {p.name.charAt(0)}
+              </div>
+              <div className="text-left">
+                <div className="text-[17px] font-medium text-[hsl(var(--foreground))]">
+                  {p.name}
+                  <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded-full bg-[hsl(var(--primary))]/10 text-[hsl(var(--primary))]">
+                    {p.tag}
+                  </span>
+                </div>
+                <div className="text-[13px] text-[hsl(var(--muted-foreground))] mt-0.5">{p.desc}</div>
+              </div>
             </div>
-            <p className="text-[10px] text-[hsl(var(--muted-foreground))] leading-4">
-              {p.desc}
-            </p>
+            {llmProvider === p.id ? (
+              <CheckCircle2 className="w-5 h-5 text-[hsl(var(--primary))] shrink-0" />
+            ) : (
+              <ChevronRight className="w-4 h-4 text-[hsl(var(--muted-foreground))]/40 shrink-0" />
+            )}
           </button>
         ))}
       </div>
 
-      {/* API Key input */}
-      <div className="space-y-2">
-        <label className="text-sm text-[hsl(var(--foreground)/0.7)]">
-          API Key
-        </label>
-        <div className="relative">
-          <Input
-            type={showKey ? "text" : "password"}
-            placeholder={PROVIDERS.find((p) => p.id === llmProvider)?.keyHint ?? "粘贴 API Key..."}
-            value={llmApiKey}
-            onChange={(e) => setLlmApiKey(e.target.value)}
-            className="pr-10"
-          />
-          <button
-            type="button"
-            onClick={() => setShowKey(!showKey)}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
-          >
-            {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
+      {/* API Key input — Apple grouped */}
+      <div className="apple-group">
+        <div className="apple-row">
+          <span className="text-[17px] text-[hsl(var(--foreground))] shrink-0 mr-3">{t("model.apiKeyLabel")}</span>
+          <div className="relative flex-1">
+            <Input
+              type={showKey ? "text" : "password"}
+              placeholder={PROVIDERS.find((p) => p.id === llmProvider)?.keyHint ?? t("model.pasteKey")}
+              value={llmApiKey}
+              onChange={(e) => setLlmApiKey(e.target.value)}
+              className="pr-9 border-0 bg-transparent shadow-none focus-visible:ring-0 h-auto py-0 text-[15px]"
+            />
+            <button
+              type="button"
+              onClick={() => setShowKey(!showKey)}
+              className="absolute right-0 top-1/2 -translate-y-1/2 text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+            >
+              {showKey ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Test result */}
       {llmTestResult && (
-        <div
-          className={cn(
-            "rounded-lg p-3 flex items-start gap-3",
-            llmTestResult.ok
-              ? "bg-emerald-500/10 border border-emerald-500/20"
-              : "bg-red-500/10 border border-red-500/20"
-          )}
-        >
-          {llmTestResult.ok ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-          ) : (
-            <XCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
-          )}
-          <div className="text-sm">
-            {llmTestResult.ok ? (
-              <>
-                <span className="text-emerald-400 font-medium">连接成功</span>
-                <span className="text-[hsl(var(--muted-foreground))] ml-2">
-                  · {llmTestResult.model_name} · {llmTestResult.latency_ms}ms
-                </span>
-              </>
-            ) : (
-              <>
-                <span className="text-red-400 font-medium">连接失败</span>
-                <span className="text-[hsl(var(--muted-foreground))] ml-2 text-xs">
-                  {llmTestResult.error}
-                </span>
-              </>
-            )}
+        <div className="apple-group">
+          <div className="apple-row">
+            <div className="flex items-center gap-2.5">
+              {llmTestResult.ok ? (
+                <CheckCircle2 className="w-5 h-5 text-[hsl(var(--success))] shrink-0" />
+              ) : (
+                <XCircle className="w-5 h-5 text-[hsl(var(--destructive))] shrink-0" />
+              )}
+              <div>
+                {llmTestResult.ok ? (
+                  <div className="text-[15px]">
+                    <span className="text-[hsl(var(--success))] font-medium">{t("model.testSuccess")}</span>
+                    <span className="text-[hsl(var(--muted-foreground))] ml-2">
+                      {llmTestResult.model_name} · {llmTestResult.latency_ms}ms
+                    </span>
+                  </div>
+                ) : (
+                  <div className="text-[15px]">
+                    <span className="text-[hsl(var(--destructive))] font-medium">{t("model.testFail")}</span>
+                    <span className="text-[hsl(var(--muted-foreground))] ml-2 text-[13px]">
+                      {llmTestResult.error}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
 
-      {canAdvance && (
-        <Badge variant="success" className="self-start">
-          <CheckCircle2 className="w-3 h-3" />
-          API Key 已验证
-        </Badge>
-      )}
-
       {/* Navigation */}
-      <div className="flex justify-between mt-auto pt-2">
-        <Button variant="ghost" size="sm" onClick={back}>
-          <ArrowLeft className="w-4 h-4 mr-1" /> 返回
+      <div className="flex justify-between mt-auto pt-3">
+        <Button variant="ghost" onClick={back}>
+          <ArrowLeft className="w-5 h-5 mr-1.5" /> {t("model.back")}
         </Button>
         <div className="flex gap-2">
           <Button
@@ -202,12 +211,12 @@ export function Step2_Model() {
             disabled={!llmApiKey.trim() || llmTesting}
           >
             {llmTesting ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              <Loader2 className="w-5 h-5 mr-2 animate-spin" />
             ) : null}
-            测试连接
+            {t("model.test")}
           </Button>
           <Button onClick={advance} disabled={!canAdvance}>
-            下一步 <ArrowRight className="w-4 h-4 ml-1" />
+            {t("model.next")} <ArrowRight className="w-5 h-5 ml-1.5" />
           </Button>
         </div>
       </div>

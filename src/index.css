@@ -2,30 +2,32 @@
 
 @layer base {
   :root {
-    --background: 222 20% 8%;
-    --foreground: 210 20% 95%;
-    --card: 222 20% 11%;
-    --card-foreground: 210 20% 95%;
-    --border: 222 15% 18%;
-    --input: 222 15% 16%;
-    --primary: 196 90% 50%;
-    --primary-foreground: 222 20% 8%;
-    --secondary: 222 15% 16%;
-    --secondary-foreground: 210 20% 85%;
-    --muted: 222 15% 14%;
-    --muted-foreground: 215 15% 55%;
-    --accent: 196 90% 50%;
-    --accent-foreground: 222 20% 8%;
-    --destructive: 0 72% 51%;
+    --background: 0 0% 96%;
+    --foreground: 0 0% 13%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 13%;
+    --border: 0 0% 88%;
+    --input: 0 0% 100%;
+    --primary: 211 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 93%;
+    --secondary-foreground: 0 0% 30%;
+    --muted: 0 0% 93%;
+    --muted-foreground: 0 0% 46%;
+    --accent: 211 100% 50%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 68% 52%;
     --destructive-foreground: 0 0% 100%;
-    --ring: 196 90% 50%;
-    --radius: 0.5rem;
+    --ring: 211 100% 50%;
+    --radius: 0.625rem;
+    --success: 142 55% 40%;
+    --warning: 38 80% 52%;
   }
 }
 
 @layer base {
   html {
-    font-size: 17px;
+    font-size: 16px;
   }
   * {
     border-color: hsl(var(--border));
@@ -33,19 +35,42 @@
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     user-select: none;
+    letter-spacing: -0.01em;
   }
 }
 
+/* Apple-style grouped card */
+.apple-group {
+  background: hsl(var(--card));
+  border-radius: 12px;
+  overflow: hidden;
+}
+.apple-group > * + * {
+  border-top: 0.5px solid hsl(var(--border));
+}
+
+/* Apple-style row */
+.apple-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  min-height: 48px;
+}
+
 /* Scrollbar */
-::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: hsl(var(--muted)); }
-::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 2px; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(0 0% 78%); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(0 0% 66%); }
 
 /* Log stream font */
 .log-stream {
-  font-family: "SF Mono", "Fira Code", monospace;
-  font-size: 12px;
+  font-family: "SF Mono", "Menlo", "Monaco", monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
 }

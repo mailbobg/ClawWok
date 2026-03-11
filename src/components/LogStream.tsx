@@ -19,13 +19,13 @@ export function LogStream({ logs, className }: LogStreamProps) {
   return (
     <div
       className={cn(
-        "log-stream rounded-md bg-black/40 border border-[hsl(var(--border))] p-3 max-h-40 overflow-y-auto",
+        "log-stream rounded-[10px] bg-[hsl(var(--card))] border border-[hsl(var(--border))]/60 px-3.5 py-2.5 max-h-36 overflow-y-auto",
         className
       )}
     >
       {logs.map((l) => (
-        <div key={l.id} className="text-[hsl(var(--muted-foreground))] py-0.5 leading-5">
-          <span className="text-[hsl(var(--primary)/0.5)] mr-2">›</span>
+        <div key={l.id} className="text-[hsl(var(--muted-foreground))] py-[3px]">
+          <span className="text-[hsl(var(--primary))]/40 mr-1.5">›</span>
           {l.text}
         </div>
       ))}

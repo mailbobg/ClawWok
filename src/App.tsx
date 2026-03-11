@@ -23,22 +23,13 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen bg-[hsl(var(--background))] overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-[hsl(var(--border))]">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-bold tracking-tight text-[hsl(var(--primary))]">
-            OPENCLAW
-          </span>
-          <span className="text-[10px] text-[hsl(var(--muted-foreground))] bg-[hsl(var(--muted))] px-1.5 py-0.5 rounded">
-            OC1
-          </span>
-        </div>
+      {/* Toolbar — macOS-style centered title area */}
+      <div className="flex items-center justify-center px-6 pt-4 pb-2">
         {isWizard && <StepIndicator current={currentStep} />}
-        <div className="w-24" />
       </div>
 
       {/* Content */}
-      <div className="flex-1 min-h-0 flex flex-col px-4 py-4">
+      <div className="flex-1 min-h-0 flex flex-col px-6 pb-5 overflow-y-auto">
         {appMode === "home" && <Step0_Welcome />}
         {appMode === "wizard" && <StepComponent />}
         {appMode === "manage" && <ManagePage />}

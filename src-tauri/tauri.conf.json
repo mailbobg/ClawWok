@@ -15,7 +15,10 @@
         "title": "ClawWok 炒龙虾",
         "width": 1118,
         "height": 870,
-        "resizable": false,
+        "minWidth": 520,
+        "minHeight": 480,
+        "resizable": true,
+        "fullscreen": false,
         "center": true
       }
     ],

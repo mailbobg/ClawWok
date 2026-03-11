@@ -1,6 +1,6 @@
 mod commands;
 
-use commands::{env_doctor::*, gateway::*, im_connector::*, llm_config::*};
+use commands::{env_doctor::*, gateway::*, im_connector::*, llm_config::*, skills::*};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -8,6 +8,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             // Environment Doctor
             detect_environment,
@@ -33,6 +34,14 @@ pub fn run() {
             stop_gateway,
             open_gateway_browser,
             kill_port_process,
+            // Skills
+            list_skills,
+            toggle_skill,
+            get_skill_detail,
+            install_skill_dep,
+            create_skill,
+            import_skill_zip,
+            import_skill_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

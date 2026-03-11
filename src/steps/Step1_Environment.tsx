@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { LogStream } from "@/components/LogStream";
 import { useWizard, type EnvReport } from "@/store/wizard";
 import {
@@ -13,34 +12,12 @@ import {
   ArrowLeft,
   RefreshCw,
 } from "lucide-react";
+import { useT } from "@/i18n";
 
-interface CheckRowProps {
-  label: string;
-  value: string | boolean | null;
-  ok: boolean;
-  loading?: boolean;
-}
-
-function CheckRow({ label, value, ok, loading }: CheckRowProps) {
-  return (
-    <div className="flex items-center justify-between py-2 border-b border-[hsl(var(--border)/0.5)] last:border-0">
-      <span className="text-sm text-[hsl(var(--foreground)/0.7)]">{label}</span>
-      <div className="flex items-center gap-2">
-        {loading ? (
-          <Loader2 className="w-4 h-4 animate-spin text-[hsl(var(--muted-foreground))]" />
-        ) : ok ? (
-          <>
-            <span className="text-xs text-[hsl(var(--muted-foreground))]">
-              {typeof value === "string" ? value : ""}
-            </span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-          </>
-        ) : (
-          <XCircle className="w-4 h-4 text-red-400" />
-        )}
-      </div>
-    </div>
-  );
+function StatusIcon({ ok, loading }: { ok: boolean; loading?: boolean }) {
+  if (loading) return <Loader2 className="w-5 h-5 animate-spin text-[hsl(var(--muted-foreground))]" />;
+  if (ok) return <CheckCircle2 className="w-5 h-5 text-[hsl(var(--success))]" />;
+  return <XCircle className="w-5 h-5 text-[hsl(var(--destructive))]" />;
 }
 
 export function Step1_Environment() {
@@ -58,51 +35,53 @@ export function Step1_Environment() {
     back,
   } = useWizard();
 
+  const t = useT();
+
   const runDiagnosis = async () => {
     setEnvLoading(true);
     clearLogs();
     setEnvReady(false);
 
-    appendLog("正在检测系统环境...");
+    appendLog(t("env.log.detecting"));
 
     try {
       const report = await invoke<EnvReport>("detect_environment");
       setEnvReport(report);
 
       appendLog(
-        `操作系统: ${report.os} (${report.arch})`
+        `${t("env.os")}: ${report.os} (${report.arch})`
       );
       appendLog(
         report.node_version
           ? `Node.js: ${report.node_version} ✓`
-          : "Node.js: 未安装"
+          : t("env.log.nodeNotInstalled")
       );
-      appendLog(report.git_installed ? "Git: 已安装 ✓" : "Git: 未安装");
+      appendLog(report.git_installed ? t("env.log.gitInstalled") : t("env.log.gitNotInstalled"));
 
       // Get geo mirror
-      appendLog("正在检测网络区域...");
+      appendLog(t("env.log.detectingNetwork"));
       const mirror = await invoke<{ npm: string; region: string }>(
         "get_geo_mirror"
       );
       appendLog(
-        `网络区域: ${mirror.region === "CN" ? "中国大陆" : "海外"} — 使用 ${mirror.npm}`
+        `${mirror.region === "CN" ? t("env.log.regionCN") : t("env.log.regionOverseas")} — ${mirror.npm}`
       );
 
       if (mirror.region === "CN") {
-        appendLog("正在切换 npm 镜像源...");
+        appendLog(t("env.log.switchingMirror"));
         await invoke("set_npm_mirror", { registryUrl: mirror.npm });
-        appendLog("镜像源切换完成 ✓");
+        appendLog(t("env.log.mirrorDone"));
       }
 
       // Install brew if needed
       if (report.needs_brew) {
-        appendLog("Homebrew 未安装，开始自动安装...");
+        appendLog(t("env.log.brewNotInstalled"));
         await invoke("install_brew");
       }
 
       // Install Node if needed
       if (report.needs_node) {
-        appendLog("Node.js 版本不足，开始安装 Node.js 22...");
+        appendLog(t("env.log.nodeInsufficient"));
         const unlisten = await listen<{ text: string }>(
           "install_log",
           (e) => appendLog(e.payload.text)
@@ -116,7 +95,7 @@ export function Step1_Environment() {
       }
 
       // Install openclaw
-      appendLog("正在安装 OpenClaw 核心包...");
+      appendLog(t("env.log.installingCore"));
       const unlisten2 = await listen<{ text: string }>(
         "install_log",
         (e) => appendLog(e.payload.text)
@@ -124,10 +103,10 @@ export function Step1_Environment() {
       await invoke("download_openclaw", { cdnBase: "https://registry.npmjs.org" });
       unlisten2();
 
-      appendLog("环境准备完成！✓");
+      appendLog(t("env.log.envDone"));
       setEnvReady(true);
     } catch (err) {
-      appendLog(`错误: ${err}`);
+      appendLog(`${t("env.log.error")} ${err}`);
     } finally {
       setEnvLoading(false);
     }
@@ -139,77 +118,91 @@ export function Step1_Environment() {
     }
   }, []);
 
+  const checks: { label: string; value: string; ok: boolean; loading: boolean }[] = [
+    {
+      label: t("env.os"),
+      value: envReport ? `${envReport.os} · ${envReport.arch}` : "",
+      ok: !!envReport,
+      loading: envLoading && !envReport,
+    },
+    {
+      label: t("env.node"),
+      value: envReport?.node_version ?? "",
+      ok: !!envReport && !envReport.needs_node,
+      loading: envLoading && !envReport,
+    },
+    {
+      label: t("env.git"),
+      value: envReport?.git_installed ? t("env.installed") : t("env.notInstalled"),
+      ok: !!envReport?.git_installed,
+      loading: envLoading && !envReport,
+    },
+    {
+      label: t("env.npmMirror"),
+      value: t("env.optimized"),
+      ok: envReady,
+      loading: envLoading,
+    },
+    {
+      label: t("env.openclawCore"),
+      value: t("env.installed"),
+      ok: envReady,
+      loading: envLoading,
+    },
+  ];
+
   return (
-    <div className="flex flex-col flex-1 min-h-0 gap-4">
+    <div className="flex flex-col flex-1 min-h-0 gap-5">
+      {/* Section header */}
       <div>
-        <h2 className="text-lg font-semibold">环境准备</h2>
-        <p className="text-sm text-[hsl(var(--muted-foreground))] mt-0.5">
-          自动检测并安装所有必要的运行环境
+        <h2 className="text-[20px] font-semibold tracking-tight">{t("env.title")}</h2>
+        <p className="text-[15px] text-[hsl(var(--muted-foreground))] mt-1">
+          {t("env.subtitle")}
         </p>
       </div>
 
-      {/* Check list */}
-      <div className="rounded-lg bg-[hsl(var(--card))] border border-[hsl(var(--border))] px-4 py-1">
-        <CheckRow
-          label="操作系统"
-          value={envReport ? `${envReport.os} · ${envReport.arch}` : null}
-          ok={!!envReport}
-          loading={envLoading && !envReport}
-        />
-        <CheckRow
-          label="Node.js ≥ 22"
-          value={envReport?.node_version ?? null}
-          ok={!!envReport && !envReport.needs_node}
-          loading={envLoading && !envReport}
-        />
-        <CheckRow
-          label="Git"
-          value={envReport?.git_installed ? "已安装" : "未安装"}
-          ok={!!envReport?.git_installed}
-          loading={envLoading && !envReport}
-        />
-        <CheckRow
-          label="npm 镜像"
-          value="已优化"
-          ok={envReady}
-          loading={envLoading}
-        />
-        <CheckRow
-          label="OpenClaw 核心"
-          value="已安装"
-          ok={envReady}
-          loading={envLoading}
-        />
+      {/* Check list — Apple grouped */}
+      <div className="apple-group">
+        {checks.map((c, i) => (
+          <div key={i} className="apple-row">
+            <span className="text-[17px] text-[hsl(var(--foreground))]">{c.label}</span>
+            <div className="flex items-center gap-2.5">
+              {!c.loading && c.ok && c.value && (
+                <span className="text-[15px] text-[hsl(var(--muted-foreground))]">{c.value}</span>
+              )}
+              <StatusIcon ok={c.ok} loading={c.loading} />
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Log stream */}
       <LogStream logs={envLogs} />
 
-      {/* Status */}
+      {/* Status badge */}
       {envReady && (
-        <Badge variant="success" className="self-start">
-          <CheckCircle2 className="w-3 h-3" />
-          环境就绪
-        </Badge>
+        <div className="flex items-center gap-2 text-[15px] text-[hsl(var(--success))] font-medium">
+          <CheckCircle2 className="w-5 h-5" />
+          {t("env.ready")}
+        </div>
       )}
 
       {/* Navigation */}
-      <div className="flex justify-between mt-auto pt-2">
-        <Button variant="ghost" size="sm" onClick={back}>
-          <ArrowLeft className="w-4 h-4 mr-1" /> 返回
+      <div className="flex justify-between mt-auto pt-3">
+        <Button variant="ghost" onClick={back}>
+          <ArrowLeft className="w-5 h-5 mr-1.5" /> {t("env.back")}
         </Button>
         <div className="flex gap-2">
           <Button
             variant="outline"
-            size="sm"
             onClick={runDiagnosis}
             disabled={envLoading}
           >
-            <RefreshCw className={`w-3 h-3 mr-1 ${envLoading ? "animate-spin" : ""}`} />
-            重新检测
+            <RefreshCw className={`w-4 h-4 mr-1.5 ${envLoading ? "animate-spin" : ""}`} />
+            {t("env.recheck")}
           </Button>
           <Button onClick={advance} disabled={!envReady}>
-            下一步 <ArrowRight className="w-4 h-4 ml-1" />
+            {t("env.next")} <ArrowRight className="w-5 h-5 ml-1.5" />
           </Button>
         </div>
       </div>

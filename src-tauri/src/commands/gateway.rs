@@ -103,8 +103,8 @@ pub async fn start_gateway(app: tauri::AppHandle) -> Result<GatewayStatus, Strin
         }
     }
 
-    // 等待端口就绪（最多 10 秒）
-    for i in 0..10 {
+    // 等待端口就绪（最多 20 秒）
+    for i in 0..20 {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         if TcpListener::bind(format!("127.0.0.1:{}", GATEWAY_PORT)).is_err() {
             app.emit("gateway_log", serde_json::json!({ "text": "Gateway 启动成功 ✓" })).ok();
@@ -112,6 +112,9 @@ pub async fn start_gateway(app: tauri::AppHandle) -> Result<GatewayStatus, Strin
         }
         if i == 4 {
             app.emit("gateway_log", serde_json::json!({ "text": "等待端口就绪..." })).ok();
+        }
+        if i == 14 {
+            app.emit("gateway_log", serde_json::json!({ "text": "仍在等待..." })).ok();
         }
     }
 
@@ -129,7 +132,14 @@ pub async fn start_gateway(app: tauri::AppHandle) -> Result<GatewayStatus, Strin
             .spawn()
             .ok();
 
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        // 等待前台进程启动（最多 8 秒）
+        for _ in 0..8 {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            if TcpListener::bind(format!("127.0.0.1:{}", GATEWAY_PORT)).is_err() {
+                app.emit("gateway_log", serde_json::json!({ "text": "Gateway 启动成功 ✓" })).ok();
+                return Ok(get_gateway_status());
+            }
+        }
     }
 
     Ok(get_gateway_status())
@@ -215,6 +225,42 @@ pub async fn stop_gateway(app: tauri::AppHandle) -> Result<GatewayStatus, String
         if TcpListener::bind(format!("127.0.0.1:{}", GATEWAY_PORT)).is_ok() {
             app.emit("gateway_log", serde_json::json!({ "text": "Gateway 已停止 ✓" })).ok();
             return Ok(get_gateway_status());
+        }
+    }
+
+    // 端口仍被占用 → 可能是前台模式启动的，直接 kill 进程
+    if TcpListener::bind(format!("127.0.0.1:{}", GATEWAY_PORT)).is_err() {
+        app.emit("gateway_log", serde_json::json!({ "text": "launchd 服务未找到，尝试终止端口进程..." })).ok();
+
+        let lsof = Command::new("/usr/sbin/lsof")
+            .args(["-i", &format!(":{}", GATEWAY_PORT), "-n", "-P", "-t"])
+            .output();
+
+        if let Ok(out) = lsof {
+            let pids_str = String::from_utf8_lossy(&out.stdout).to_string();
+            for pid_line in pids_str.lines() {
+                if let Ok(pid) = pid_line.trim().parse::<u32>() {
+                    app.emit("gateway_log", serde_json::json!({ "text": format!("终止进程 PID {}...", pid) })).ok();
+                    Command::new("kill").args(["-15", &pid.to_string()]).output().ok();
+                }
+            }
+
+            // 等待端口释放
+            for _ in 0..5 {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if TcpListener::bind(format!("127.0.0.1:{}", GATEWAY_PORT)).is_ok() {
+                    app.emit("gateway_log", serde_json::json!({ "text": "Gateway 已停止 ✓" })).ok();
+                    return Ok(get_gateway_status());
+                }
+            }
+
+            // SIGTERM 没用，强制 SIGKILL
+            for pid_line in pids_str.lines() {
+                if let Ok(pid) = pid_line.trim().parse::<u32>() {
+                    Command::new("kill").args(["-9", &pid.to_string()]).output().ok();
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     }
 
