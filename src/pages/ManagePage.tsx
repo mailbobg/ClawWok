@@ -10,8 +10,15 @@ import {
   RefreshCw,
   ChevronLeft,
   Globe,
+  Bot,
+  MessageSquare,
+  Trash2,
+  AlertTriangle,
+  Store,
+  ArrowRight,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
-import { SkillsCard } from "@/components/SkillsCard";
 import { useT, useI18n } from "@/i18n";
 
 interface GatewayStatus {
@@ -20,8 +27,15 @@ interface GatewayStatus {
   port: number;
 }
 
+interface ConfigStatus {
+  active_provider: string | null;
+  saved_providers: string[];
+  model_key_set: boolean;
+  channels: string[];
+}
+
 export function ManagePage() {
-  const setAppMode = useWizard((s) => s.setAppMode);
+  const { setAppMode, editStep } = useWizard();
   const t = useT();
   const toggleLang = useI18n((s) => s.toggleLang);
 
@@ -30,6 +44,7 @@ export function ManagePage() {
   const [stopping, setStopping] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
+  const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
 
   const refreshStatus = async () => {
     const s = await invoke<GatewayStatus>("get_gateway_status");
@@ -37,9 +52,40 @@ export function ManagePage() {
     return s;
   };
 
+  const refreshConfigStatus = async () => {
+    try {
+      const s = await invoke<ConfigStatus>("get_config_status");
+      setConfigStatus(s);
+    } catch {
+      // silently ignore
+    }
+  };
+
   useEffect(() => {
     refreshStatus();
+    refreshConfigStatus();
   }, []);
+
+  const providerLabel = (p: string | null) => {
+    if (!p) return null;
+    switch (p) {
+      case "claude": return "Claude";
+      case "deepseek": return "DeepSeek";
+      case "deepseek_or": return "OpenRouter";
+      case "minimax": return "Minimax";
+      default: return p;
+    }
+  };
+
+  const channelLabel = (ch: string) => {
+    switch (ch) {
+      case "feishu": return t("channel.feishu");
+      case "whatsapp": return "WhatsApp";
+      case "clawin": return "Clawin";
+      case "qq": return "QQ";
+      default: return ch;
+    }
+  };
 
   const startGateway = async () => {
     setStarting(true);
@@ -201,8 +247,193 @@ export function ManagePage() {
         </div>
       </div>
 
-      {/* Skills */}
-      <SkillsCard />
+      {/* Quick config shortcuts */}
+      <div className="flex gap-2">
+        <button
+          onClick={() => { editStep(2); }}
+          className="flex-1 flex items-center gap-2.5 rounded-[12px] bg-[hsl(var(--card))] border border-[hsl(var(--border))]/60 px-4 py-3 hover:bg-[hsl(var(--muted))] transition-colors"
+        >
+          <Bot className="w-5 h-5 text-[hsl(var(--primary))]" />
+          <div className="flex-1 text-left min-w-0">
+            <span className="text-[15px] font-medium">{t("manage.modelConfig")}</span>
+            {configStatus && (
+              <div className="flex items-center gap-1 mt-0.5">
+                {configStatus.model_key_set ? (
+                  <>
+                    <CheckCircle2 className="w-3 h-3 text-[hsl(var(--success))] shrink-0" />
+                    <span className="text-[12px] text-[hsl(var(--success))] truncate">
+                      {providerLabel(configStatus.active_provider)}
+                      {configStatus.saved_providers.length > 1 && (
+                        <span className="text-[hsl(var(--muted-foreground))]">
+                          {" "}({configStatus.saved_providers.length} {t("manage.keysSaved")})
+                        </span>
+                      )}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="w-3 h-3 text-[hsl(var(--warning))] shrink-0" />
+                    <span className="text-[12px] text-[hsl(var(--warning))]">
+                      {t("manage.notConfigured")}
+                    </span>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </button>
+        <button
+          onClick={() => { editStep(3); }}
+          className="flex-1 flex items-center gap-2.5 rounded-[12px] bg-[hsl(var(--card))] border border-[hsl(var(--border))]/60 px-4 py-3 hover:bg-[hsl(var(--muted))] transition-colors"
+        >
+          <MessageSquare className="w-5 h-5 text-[hsl(var(--primary))]" />
+          <div className="flex-1 text-left min-w-0">
+            <span className="text-[15px] font-medium">{t("manage.channelConfig")}</span>
+            {configStatus && (
+              <div className="flex items-center gap-1 mt-0.5">
+                {configStatus.channels.length > 0 ? (
+                  <>
+                    <CheckCircle2 className="w-3 h-3 text-[hsl(var(--success))] shrink-0" />
+                    <span className="text-[12px] text-[hsl(var(--success))] truncate">
+                      {configStatus.channels.map(channelLabel).join(", ")}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="w-3 h-3 text-[hsl(var(--warning))] shrink-0" />
+                    <span className="text-[12px] text-[hsl(var(--warning))]">
+                      {t("manage.notConfigured")}
+                    </span>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </button>
+      </div>
+
+      {/* Skills Market shortcut */}
+      <button
+        onClick={() => setAppMode("skills")}
+        className="flex items-center gap-2.5 rounded-[12px] bg-[hsl(var(--card))] border border-[hsl(var(--border))]/60 px-4 py-3 hover:bg-[hsl(var(--muted))] transition-colors"
+      >
+        <Store className="w-5 h-5 text-[hsl(32,82%,52%)]" />
+        <span className="text-[15px] font-medium flex-1 text-left">{t("market.title")}</span>
+        <ArrowRight className="w-4 h-4 text-[hsl(var(--muted-foreground))]/40" />
+      </button>
+
+      {/* Uninstall */}
+      <UninstallSection />
     </div>
+  );
+}
+
+// ─── Uninstall Section ──────────────────────────────────────────────────────
+type UninstallState = "idle" | "confirm" | "running" | "done";
+
+function UninstallSection() {
+  const t = useT();
+  const { setAppMode } = useWizard();
+  const [state, setState] = useState<UninstallState>("idle");
+  const [logs, setLogs] = useState<string[]>([]);
+
+  const doUninstall = async () => {
+    setState("running");
+    setLogs([]);
+
+    const unlisten = await listen<{ text: string }>("uninstall_log", (e) => {
+      setLogs((p) => [...p, e.payload.text]);
+    });
+
+    try {
+      await invoke("uninstall_openclaw");
+      setState("done");
+    } catch (err) {
+      setLogs((p) => [...p, `Error: ${err}`]);
+      setState("done");
+    } finally {
+      unlisten();
+    }
+  };
+
+  if (state === "done") {
+    return (
+      <div className="space-y-3">
+        <div className="rounded-[12px] bg-[hsl(var(--card))] border border-[hsl(var(--border))]/60 px-4 py-3">
+          <p className="text-[15px] font-medium text-[hsl(var(--success))]">{t("uninstall.done")}</p>
+        </div>
+        {logs.length > 0 && (
+          <div className="log-stream rounded-[10px] bg-[hsl(var(--card))] border border-[hsl(var(--border))]/60 px-3.5 py-2.5 max-h-[160px] overflow-auto">
+            {logs.map((l, i) => (
+              <div key={i} className="text-[hsl(var(--muted-foreground))] py-[2px]">
+                <span className="text-[hsl(var(--primary))]/40 mr-1.5">›</span>{l}
+              </div>
+            ))}
+          </div>
+        )}
+        <button
+          onClick={() => setAppMode("home")}
+          className="text-[13px] text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))] transition-colors"
+        >
+          {t("complete.goHome")}
+        </button>
+      </div>
+    );
+  }
+
+  if (state === "running") {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2.5 rounded-[12px] bg-[hsl(var(--destructive))]/10 border border-[hsl(var(--destructive))]/20 px-4 py-3">
+          <Loader2 className="w-5 h-5 animate-spin text-[hsl(var(--destructive))]" />
+          <span className="text-[15px] font-medium text-[hsl(var(--destructive))]">{t("uninstall.running")}</span>
+        </div>
+        {logs.length > 0 && (
+          <div className="log-stream rounded-[10px] bg-[hsl(var(--card))] border border-[hsl(var(--border))]/60 px-3.5 py-2.5 max-h-[160px] overflow-auto">
+            {logs.map((l, i) => (
+              <div key={i} className="text-[hsl(var(--muted-foreground))] py-[2px]">
+                <span className="text-[hsl(var(--primary))]/40 mr-1.5">›</span>{l}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (state === "confirm") {
+    return (
+      <div className="rounded-[12px] bg-[hsl(var(--destructive))]/5 border border-[hsl(var(--destructive))]/20 px-4 py-4 space-y-3">
+        <div className="flex items-center gap-2.5">
+          <AlertTriangle className="w-5 h-5 text-[hsl(var(--destructive))] shrink-0" />
+          <span className="text-[15px] font-semibold text-[hsl(var(--destructive))]">{t("uninstall.title")}</span>
+        </div>
+        <p className="text-[13px] text-[hsl(var(--muted-foreground))] leading-5">{t("uninstall.desc")}</p>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setState("idle")}
+            className="flex-1 py-2 rounded-[8px] text-[13px] font-medium bg-[hsl(var(--muted))] text-[hsl(var(--foreground))] hover:bg-[hsl(var(--muted))]/80 transition-colors"
+          >
+            {t("uninstall.cancel")}
+          </button>
+          <button
+            onClick={doUninstall}
+            className="flex-1 py-2 rounded-[8px] text-[13px] font-medium bg-[hsl(var(--destructive))] text-white hover:brightness-110 transition-all"
+          >
+            {t("uninstall.confirm")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => setState("confirm")}
+      className="flex items-center justify-center gap-2 w-full rounded-[12px] border border-[hsl(var(--border))]/60 px-4 py-3 text-[14px] text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--destructive))] hover:border-[hsl(var(--destructive))]/30 transition-colors"
+    >
+      <Trash2 className="w-4 h-4" />
+      {t("uninstall.btn")}
+    </button>
   );
 }

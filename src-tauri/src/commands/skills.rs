@@ -68,6 +68,12 @@ pub struct SkillItem {
     #[serde(default)]
     pub homepage: Option<String>,
     pub missing: MissingRequirements,
+    /// Directory modification time (epoch ms), filled post-parse
+    #[serde(default)]
+    pub installed_at: Option<u64>,
+    /// Directory name on disk (may differ from name), filled post-parse
+    #[serde(default)]
+    pub dir_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -101,11 +107,146 @@ pub async fn list_skills() -> Result<SkillsListResult, String> {
     let parsed: SkillsListResponse = serde_json::from_str(json_str)
         .map_err(|e| format!("JSON 解析失败: {} — 输出: {}", e, &stdout[..stdout.len().min(200)]))?;
 
-    let total = parsed.skills.len();
-    let eligible_count = parsed.skills.iter().filter(|s| s.eligible).count();
+    // Enrich with installed_at from directory modification time
+    let skill_dirs: Vec<std::path::PathBuf> = if let Some(home) = dirs::home_dir() {
+        vec![
+            home.join(".openclaw").join("skills"),
+            home.join(".agents").join("skills"),
+            home.join(".cursor").join("skills"),
+        ]
+    } else {
+        vec![]
+    };
+
+    let mut skills = parsed.skills;
+
+    // Build a set of known skill names from CLI output
+    let cli_names: std::collections::HashSet<String> = skills.iter().map(|s| s.name.clone()).collect();
+
+    for skill in &mut skills {
+        // Try to find the skill directory and get its mtime + dir_name
+        for dir in &skill_dirs {
+            // Try matching by name first
+            let candidate = dir.join(&skill.name);
+            if candidate.exists() {
+                if let Ok(meta) = fs::metadata(&candidate) {
+                    if let Ok(modified) = meta.modified() {
+                        if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                            skill.installed_at = Some(duration.as_millis() as u64);
+                        }
+                    }
+                }
+                skill.dir_name = Some(skill.name.clone());
+                break;
+            }
+            // Also scan dir entries for SKILL.md that declares this skill name
+            if let Ok(entries) = fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        continue;
+                    }
+                    let dir_name = entry.file_name().to_string_lossy().to_string();
+                    let skill_md = entry.path().join("SKILL.md");
+                    if skill_md.exists() {
+                        if let Ok(content) = fs::read_to_string(&skill_md) {
+                            if let Some(parsed_name) = parse_skill_name(&content) {
+                                if parsed_name == skill.name {
+                                    skill.dir_name = Some(dir_name);
+                                    if let Ok(meta) = fs::metadata(entry.path()) {
+                                        if let Ok(modified) = meta.modified() {
+                                            if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                                                skill.installed_at = Some(duration.as_millis() as u64);
+                                            }
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if skill.dir_name.is_some() {
+                break;
+            }
+        }
+    }
+
+    // Supplement: scan disk directories for skills NOT in CLI output
+    for dir in &skill_dirs {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    continue;
+                }
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                let skill_md = entry.path().join("SKILL.md");
+                if !skill_md.exists() {
+                    continue;
+                }
+                // Parse SKILL.md to get name and description
+                let content = match fs::read_to_string(&skill_md) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                let parsed_name = parse_skill_name(&content).unwrap_or_else(|| dir_name.clone());
+
+                // Skip if CLI already reported this skill (by name or dir_name)
+                if cli_names.contains(&parsed_name) {
+                    continue;
+                }
+                if skills.iter().any(|s| s.dir_name.as_deref() == Some(&dir_name)) {
+                    continue;
+                }
+
+                let description = parse_skill_description(&content).unwrap_or_default();
+                let emoji = parse_skill_emoji(&content);
+
+                let mut installed_at = None;
+                if let Ok(meta) = fs::metadata(entry.path()) {
+                    if let Ok(modified) = meta.modified() {
+                        if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                            installed_at = Some(duration.as_millis() as u64);
+                        }
+                    }
+                }
+
+                let source = dir.to_string_lossy().to_string();
+
+                skills.push(SkillItem {
+                    name: parsed_name,
+                    description,
+                    emoji,
+                    eligible: true, // on disk = available
+                    disabled: false,
+                    blocked_by_allowlist: false,
+                    source,
+                    bundled: false,
+                    homepage: None,
+                    missing: MissingRequirements::default(),
+                    installed_at,
+                    dir_name: Some(dir_name),
+                });
+            }
+        }
+    }
+
+    let total = skills.len();
+    let eligible_count = skills.iter().filter(|s| s.eligible).count();
+
+    // Sort: most recently installed first (non-bundled with timestamp),
+    // then bundled skills alphabetically
+    skills.sort_by(|a, b| {
+        match (a.installed_at, b.installed_at) {
+            (Some(ta), Some(tb)) => tb.cmp(&ta), // newer first
+            (Some(_), None) => std::cmp::Ordering::Less, // installed before non-installed
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.name.cmp(&b.name), // alphabetical fallback
+        }
+    });
 
     Ok(SkillsListResult {
-        skills: parsed.skills,
+        skills,
         total,
         eligible_count,
     })
@@ -429,6 +570,36 @@ fn managed_skills_dir() -> Result<String, String> {
     Ok(format!("{}/.openclaw/skills", home))
 }
 
+/// Parse a YAML frontmatter field value.
+fn parse_frontmatter_field<'a>(content: &'a str, field: &str) -> Option<&'a str> {
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with("---") {
+        return None;
+    }
+    let after_open = &trimmed[3..];
+    let end = after_open.find("---")?;
+    let frontmatter = &after_open[..end];
+    let prefix = format!("{}:", field);
+    for line in frontmatter.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix(&prefix) {
+            let val = rest.trim().trim_matches('"').trim_matches('\'');
+            if !val.is_empty() {
+                return Some(val);
+            }
+        }
+    }
+    None
+}
+
+fn parse_skill_description(content: &str) -> Option<String> {
+    parse_frontmatter_field(content, "description").map(|s| s.to_string())
+}
+
+fn parse_skill_emoji(content: &str) -> Option<String> {
+    parse_frontmatter_field(content, "emoji").map(|s| s.to_string())
+}
+
 /// Parse `name` from SKILL.md YAML frontmatter.
 fn parse_skill_name(content: &str) -> Option<String> {
     let trimmed = content.trim_start();
@@ -544,6 +715,64 @@ fn extract_skill_zip(zip_path: &std::path::Path) -> Result<String, String> {
     }
 
     Ok(skill_name)
+}
+
+// ---------- Uninstall skill ----------
+
+#[tauri::command]
+pub async fn uninstall_skill(name: String) -> Result<(), String> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| "Cannot determine home directory".to_string())?;
+
+    // Use `openclaw skills info` to get the actual baseDir
+    let bin = openclaw_bin();
+    let output = Command::new(&bin)
+        .args(["skills", "info", &name, "--json"])
+        .env("PATH", full_path_env())
+        .output()
+        .map_err(|e| format!("Failed to query skill info: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let json_str = extract_json(&stdout);
+    let detail: SkillDetail = serde_json::from_str(json_str)
+        .map_err(|e| format!("Failed to parse skill info: {}", e))?;
+
+    if detail.bundled {
+        return Err("Cannot uninstall bundled skills".to_string());
+    }
+
+    let base_dir = detail.base_dir
+        .ok_or_else(|| format!("Skill '{}' has no baseDir", name))?;
+    let skill_path = std::path::PathBuf::from(&base_dir);
+
+    if !skill_path.exists() {
+        return Err(format!("Skill directory not found: {}", base_dir));
+    }
+
+    // Safety: only allow deletion within known skill directories
+    let allowed_bases = [
+        home.join(".openclaw").join("skills"),
+        home.join(".agents").join("skills"),
+        home.join(".cursor").join("skills"),
+    ];
+
+    let canonical = skill_path.canonicalize()
+        .map_err(|e| format!("Path error: {}", e))?;
+
+    let is_safe = allowed_bases.iter().any(|base| {
+        base.canonicalize()
+            .map(|cb| canonical.starts_with(&cb))
+            .unwrap_or(false)
+    });
+
+    if !is_safe {
+        return Err(format!("Cannot uninstall skill at {}: outside managed directories", base_dir));
+    }
+
+    fs::remove_dir_all(&skill_path)
+        .map_err(|e| format!("Failed to remove skill: {}", e))?;
+
+    Ok(())
 }
 
 // ---------- Import from zip file ----------

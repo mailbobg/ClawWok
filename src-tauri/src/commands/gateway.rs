@@ -275,3 +275,122 @@ pub fn kill_port_process(pid: u32) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+// ─── Uninstall OpenClaw ──────────────────────────────────────────────────────
+
+/// Completely uninstall OpenClaw:
+///   1. Stop gateway
+///   2. Uninstall gateway LaunchAgent service
+///   3. Remove ~/.openclaw/ config directory
+///   4. npm uninstall -g openclaw (remove CLI)
+///   5. Remove /tmp/openclaw/ logs
+#[tauri::command]
+pub async fn uninstall_openclaw(app: tauri::AppHandle) -> Result<bool, String> {
+    use tauri::Emitter;
+
+    let emit = |text: &str| {
+        app.emit("uninstall_log", serde_json::json!({ "text": text })).ok();
+    };
+
+    let bin = openclaw_bin();
+    let path_env = full_path_env();
+
+    // 1. Stop gateway
+    emit("正在停止 Gateway ...");
+    let _ = Command::new(&bin)
+        .args(["gateway", "stop"])
+        .env("PATH", &path_env)
+        .output();
+
+    // Also kill any leftover processes on the port
+    if TcpListener::bind(format!("127.0.0.1:{}", GATEWAY_PORT)).is_err() {
+        let lsof = Command::new("/usr/sbin/lsof")
+            .args(["-i", &format!(":{}", GATEWAY_PORT), "-n", "-P", "-t"])
+            .output();
+        if let Ok(out) = lsof {
+            for pid_line in String::from_utf8_lossy(&out.stdout).lines() {
+                if let Ok(pid) = pid_line.trim().parse::<u32>() {
+                    Command::new("kill").args(["-9", &pid.to_string()]).output().ok();
+                }
+            }
+        }
+    }
+    emit("Gateway 已停止 ✓");
+
+    // 2. Uninstall LaunchAgent service
+    emit("正在移除 Gateway 服务 ...");
+    let _ = Command::new(&bin)
+        .args(["gateway", "uninstall"])
+        .env("PATH", &path_env)
+        .output();
+
+    // Also remove the plist file directly
+    let home = std::env::var("HOME").unwrap_or_default();
+    let plist = format!("{}/Library/LaunchAgents/ai.openclaw.gateway.plist", home);
+    if std::path::Path::new(&plist).exists() {
+        // Get current user ID
+        let uid = Command::new("id").arg("-u").output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        if !uid.is_empty() {
+            let _ = Command::new("launchctl")
+                .args(["bootout", &format!("gui/{}", uid), &plist])
+                .output();
+        }
+        std::fs::remove_file(&plist).ok();
+    }
+    emit("Gateway 服务已移除 ✓");
+
+    // 3. Remove ~/.openclaw/ config directory
+    emit("正在删除配置目录 (~/.openclaw/) ...");
+    let config_dir = format!("{}/.openclaw", home);
+    if std::path::Path::new(&config_dir).exists() {
+        match std::fs::remove_dir_all(&config_dir) {
+            Ok(_) => emit("配置目录已删除 ✓"),
+            Err(e) => emit(&format!("删除配置目录失败: {} (可手动删除)", e)),
+        }
+    } else {
+        emit("配置目录不存在，跳过");
+    }
+
+    // 4. npm uninstall -g openclaw
+    emit("正在卸载 OpenClaw CLI (npm uninstall -g openclaw) ...");
+    let npm = find_npm();
+    let uninstall = Command::new(&npm)
+        .args(["uninstall", "-g", "openclaw"])
+        .env("PATH", &path_env)
+        .output();
+
+    match uninstall {
+        Ok(out) => {
+            if out.status.success() {
+                emit("OpenClaw CLI 已卸载 ✓");
+            } else {
+                let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                emit(&format!("CLI 卸载可能不完整: {}", err));
+            }
+        }
+        Err(e) => emit(&format!("npm 执行失败: {} (可手动运行 npm uninstall -g openclaw)", e)),
+    }
+
+    // 5. Remove /tmp/openclaw/ logs
+    emit("正在清理日志文件 ...");
+    let tmp_dir = "/tmp/openclaw";
+    if std::path::Path::new(tmp_dir).exists() {
+        std::fs::remove_dir_all(tmp_dir).ok();
+        emit("日志已清理 ✓");
+    }
+
+    emit("✅ OpenClaw 已完全卸载");
+    Ok(true)
+}
+
+fn find_npm() -> String {
+    for dir in EXTRA_PATHS {
+        let p = format!("{}/npm", dir);
+        if std::path::Path::new(&p).exists() {
+            return p;
+        }
+    }
+    "npm".to_string()
+}

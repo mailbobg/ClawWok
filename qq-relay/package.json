@@ -1,0 +1,8 @@
+{
+  "name": "openclaw-qq-relay",
+  "private": true,
+  "dependencies": {
+    "@vercel/kv": "^2.0.0",
+    "@vercel/node": "^3.0.0"
+  }
+}

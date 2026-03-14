@@ -1,6 +1,6 @@
 mod commands;
 
-use commands::{env_doctor::*, gateway::*, im_connector::*, llm_config::*, skills::*};
+use commands::{env_doctor::*, gateway::*, im_connector::*, llm_config::*, skill_market::*, skills::*};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -20,12 +20,16 @@ pub fn run() {
             // LLM Config
             save_llm_config,
             test_llm_connection,
+            get_config_status,
+            list_openrouter_models,
             // IM Connector
             start_feishu_channel,
             write_feishu_config,
             verify_feishu_credentials,
             start_whatsapp_login,
             cancel_whatsapp_login,
+            deploy_qq_relay,
+            save_clawin_config,
             // Gateway
             check_port,
             get_gateway_token,
@@ -34,12 +38,18 @@ pub fn run() {
             stop_gateway,
             open_gateway_browser,
             kill_port_process,
+            uninstall_openclaw,
+            // Skill Market
+            fetch_skill_market,
+            list_installed_skills,
+            install_market_skill,
             // Skills
             list_skills,
             toggle_skill,
             get_skill_detail,
             install_skill_dep,
             create_skill,
+            uninstall_skill,
             import_skill_zip,
             import_skill_url,
         ])

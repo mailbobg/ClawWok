@@ -34,6 +34,8 @@ export interface SkillItem {
   bundled: boolean;
   homepage?: string;
   missing: MissingRequirements;
+  installedAt?: number;
+  dirName?: string;
 }
 
 export interface SkillsListResult {
@@ -81,7 +83,7 @@ export const useSkillsStore = create<SkillsState>((set) => ({
   eligibleCount: 0,
   loading: false,
   error: null,
-  filter: "eligible",
+  filter: "all",
   searchQuery: "",
   expandedSkill: null,
   togglingSkill: null,

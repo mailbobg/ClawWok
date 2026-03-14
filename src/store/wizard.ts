@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 export interface LogLine {
   id: number;
@@ -22,6 +23,7 @@ export interface TestResult {
   latency_ms: number;
   error: string | null;
   model_name: string | null;
+  status: "ok" | "rate_limited" | "region_blocked" | "error";
 }
 
 export interface FeishuVerifyResult {
@@ -31,15 +33,16 @@ export interface FeishuVerifyResult {
 }
 
 export type LlmProvider = "claude" | "deepseek" | "deepseek_or" | "minimax";
-export type Channel = "feishu" | "whatsapp";
+export type Channel = "feishu" | "whatsapp" | "qq" | "clawin";
 
 let logId = 0;
 
-export type AppMode = "home" | "wizard" | "manage";
+export type AppMode = "home" | "wizard" | "manage" | "skills";
 
 interface WizardState {
   appMode: AppMode;
   currentStep: number;
+  editingFromManage: boolean; // true = jumped from manage page, hide step bar
 
   // Step 1: Environment
   envReport: EnvReport | null;
@@ -61,6 +64,14 @@ interface WizardState {
   feishuVerified: FeishuVerifyResult | null;
   feishuVerifying: boolean;
   whatsappReady: boolean;
+  qqAppId: string;
+  qqAppSecret: string;
+  qqRelayUrl: string;
+  qqRelayToken: string;
+  qqSaved: boolean;
+  clawinRoomId: string;
+  clawinRelayUrl: string;
+  clawinSaved: boolean;
 
   // Step 4: Complete
   gatewayToken: string | null;
@@ -68,6 +79,7 @@ interface WizardState {
   // Actions
   setAppMode: (m: AppMode) => void;
   goTo: (step: number) => void;
+  editStep: (step: number) => void; // jump from manage to a specific step
   advance: () => void;
   back: () => void;
   appendLog: (text: string) => void;
@@ -86,17 +98,25 @@ interface WizardState {
   setFeishuVerified: (r: FeishuVerifyResult | null) => void;
   setFeishuVerifying: (v: boolean) => void;
   setWhatsappReady: (v: boolean) => void;
+  setQqAppId: (v: string) => void;
+  setQqAppSecret: (v: string) => void;
+  setQqRelayUrl: (v: string) => void;
+  setQqRelayToken: (v: string) => void;
+  setQqSaved: (v: boolean) => void;
+  setClawinRoomId: (v: string) => void;
+  setClawinRelayUrl: (v: string) => void;
+  setClawinSaved: (v: boolean) => void;
   setGatewayToken: (t: string) => void;
 }
 
 const DEFAULT_MODELS: Record<LlmProvider, string> = {
   claude: "claude-sonnet-4-6",
   deepseek: "deepseek-chat",        // vllm → api.deepseek.com/v1
-  deepseek_or: "deepseek/deepseek-chat-v3-0324",  // openrouter
+  deepseek_or: "deepseek/deepseek-chat",  // openrouter
   minimax: "minimax-m2.5:free",
 };
 
-export const useWizard = create<WizardState>((set) => ({
+export const useWizard = create<WizardState>()(persist((set) => ({
   appMode: "home",
   currentStep: 0,
   envReport: null,
@@ -108,18 +128,34 @@ export const useWizard = create<WizardState>((set) => ({
   llmModel: DEFAULT_MODELS["deepseek"],
   llmTestResult: null,
   llmTesting: false,
-  activeChannel: "feishu",
+  activeChannel: "clawin",
   feishuAppId: "",
   feishuAppSecret: "",
   feishuVerified: null,
   feishuVerifying: false,
   whatsappReady: false,
+  qqAppId: "",
+  qqAppSecret: "",
+  qqRelayUrl: "",
+  qqRelayToken: "",
+  qqSaved: false,
+  clawinRoomId: "",
+  clawinRelayUrl: "wss://openclaw.rewen.org",
+  clawinSaved: false,
   gatewayToken: null,
+  editingFromManage: false,
 
-  setAppMode: (m) => set({ appMode: m }),
+  setAppMode: (m) => set({ appMode: m, editingFromManage: false }),
   goTo: (step) => set({ currentStep: step }),
-  advance: () => set((s) => ({ currentStep: Math.min(s.currentStep + 1, 4) })),
-  back: () => set((s) => ({ currentStep: Math.max(s.currentStep - 1, 0) })),
+  editStep: (step) => set({ appMode: "wizard", currentStep: step, editingFromManage: true }),
+  advance: () => set((s) => {
+    if (s.editingFromManage) return { appMode: "manage", editingFromManage: false };
+    return { currentStep: Math.min(s.currentStep + 1, 4) };
+  }),
+  back: () => set((s) => {
+    if (s.editingFromManage) return { appMode: "manage", editingFromManage: false };
+    return { currentStep: Math.max(s.currentStep - 1, 0) };
+  }),
 
   appendLog: (text) =>
     set((s) => ({
@@ -144,7 +180,36 @@ export const useWizard = create<WizardState>((set) => ({
   setFeishuVerified: (r) => set({ feishuVerified: r }),
   setFeishuVerifying: (v) => set({ feishuVerifying: v }),
   setWhatsappReady: (v) => set({ whatsappReady: v }),
+  setQqAppId: (v) => set({ qqAppId: v, qqSaved: false }),
+  setQqAppSecret: (v) => set({ qqAppSecret: v, qqSaved: false }),
+  setQqRelayUrl: (v) => set({ qqRelayUrl: v, qqSaved: false }),
+  setQqRelayToken: (v) => set({ qqRelayToken: v, qqSaved: false }),
+  setQqSaved: (v) => set({ qqSaved: v }),
+  setClawinRoomId: (v) => set({ clawinRoomId: v, clawinSaved: false }),
+  setClawinRelayUrl: (v) => set({ clawinRelayUrl: v, clawinSaved: false }),
+  setClawinSaved: (v) => set({ clawinSaved: v }),
   setGatewayToken: (t) => set({ gatewayToken: t }),
+}), {
+  name: "openclaw-channel-config",
+  partialize: (state) => ({
+    // Only persist channel configuration fields
+    feishuAppId: state.feishuAppId,
+    feishuAppSecret: state.feishuAppSecret,
+    feishuVerified: state.feishuVerified,
+    whatsappReady: state.whatsappReady,
+    qqAppId: state.qqAppId,
+    qqAppSecret: state.qqAppSecret,
+    qqRelayUrl: state.qqRelayUrl,
+    qqRelayToken: state.qqRelayToken,
+    qqSaved: state.qqSaved,
+    clawinRoomId: state.clawinRoomId,
+    clawinRelayUrl: state.clawinRelayUrl,
+    clawinSaved: state.clawinSaved,
+    // Also persist LLM config
+    llmProvider: state.llmProvider,
+    llmApiKey: state.llmApiKey,
+    llmModel: state.llmModel,
+  }),
 }));
 
 export const DEFAULT_MODELS_MAP = DEFAULT_MODELS;

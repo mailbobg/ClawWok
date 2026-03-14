@@ -1,0 +1,6 @@
+{
+  "functions": {
+    "api/qq.ts": { "maxDuration": 10 },
+    "api/poll.ts": { "maxDuration": 10 }
+  }
+}

@@ -26,7 +26,7 @@ interface GatewayStatus {
 }
 
 export function Step4_Complete() {
-  const { llmProvider, activeChannel, back, setAppMode } = useWizard();
+  const { llmProvider, feishuVerified, whatsappReady, qqSaved, clawinSaved, back, setAppMode } = useWizard();
   const t = useT();
 
   const [gwStatus, setGwStatus] = useState<GatewayStatus | null>(null);
@@ -101,12 +101,14 @@ export function Step4_Complete() {
   const PROVIDER_LABELS: Record<string, string> = {
     claude: t("complete.providerClaude"),
     deepseek: t("complete.providerDeepseek"),
+    deepseek_or: t("complete.providerOpenrouter"),
     minimax: t("complete.providerMinimax"),
   };
-  const CHANNEL_LABELS: Record<string, string> = {
-    feishu: t("complete.channelFeishu"),
-    whatsapp: "WhatsApp",
-  };
+  const configuredChannels: string[] = [];
+  if (feishuVerified?.ok) configuredChannels.push(t("complete.channelFeishu"));
+  if (whatsappReady) configuredChannels.push("WhatsApp");
+  if (qqSaved) configuredChannels.push(t("complete.channelQQ"));
+  if (clawinSaved) configuredChannels.push(t("complete.channelClawin"));
 
   const gatewayRunning = gwStatus?.running === true;
   const gatewayUrl = gwStatus?.url ?? "http://127.0.0.1:18789/";
@@ -134,7 +136,7 @@ export function Step4_Complete() {
         </div>
         <div className="apple-row">
           <span className="text-[17px] text-[hsl(var(--muted-foreground))]">{t("complete.channel")}</span>
-          <span className="text-[17px] font-medium">{CHANNEL_LABELS[activeChannel] ?? activeChannel}</span>
+          <span className="text-[17px] font-medium">{configuredChannels.join(" · ") || "—"}</span>
         </div>
         <div className="apple-row">
           <span className="text-[17px] text-[hsl(var(--muted-foreground))]">Gateway</span>

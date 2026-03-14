@@ -9,12 +9,10 @@ import {
   type SkillItem,
   type SkillsListResult,
   type SkillDetail,
-  type SkillFilter,
 } from "@/store/skills";
 import {
   RefreshCw,
   Loader2,
-  ChevronDown,
   ChevronRight,
   ExternalLink,
   Search,
@@ -25,6 +23,7 @@ import {
   Upload,
   Link,
   FileText,
+  Trash2,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
@@ -34,20 +33,10 @@ import { useT } from "@/i18n";
 export function SkillsCard() {
   const t = useT();
 
-  const FILTER_LABELS: Record<SkillFilter, string> = {
-    all: t("skills.filterAll"),
-    eligible: t("skills.filterEligible"),
-    disabled: t("skills.filterDisabled"),
-    missing: t("skills.filterMissing"),
-  };
-
   const {
     skills,
-    total,
-    eligibleCount,
     loading,
     error,
-    filter,
     searchQuery,
     expandedSkill,
     togglingSkill,
@@ -58,7 +47,6 @@ export function SkillsCard() {
     setSkills,
     setLoading,
     setError,
-    setFilter,
     setSearchQuery,
     setExpandedSkill,
     setTogglingSkill,
@@ -70,6 +58,22 @@ export function SkillsCard() {
     setSkillDetail,
     clearSkillDetail,
   } = useSkillsStore();
+
+  const [uninstallingSkill, setUninstallingSkill] = useState<string | null>(null);
+
+  const handleUninstall = async (skillName: string) => {
+    const msg = t("skills.uninstallConfirm").replace("{name}", skillName);
+    if (!window.confirm(msg)) return;
+    setUninstallingSkill(skillName);
+    try {
+      await invoke("uninstall_skill", { name: skillName });
+      await fetchSkills();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setUninstallingSkill(null);
+    }
+  };
 
   const fetchSkills = useCallback(async () => {
     setLoading(true);
@@ -85,9 +89,7 @@ export function SkillsCard() {
   }, [setLoading, setError, setSkills]);
 
   useEffect(() => {
-    if (skills.length === 0 && !loading) {
-      fetchSkills();
-    }
+    fetchSkills();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleSkill = async (skill: SkillItem) => {
@@ -280,41 +282,34 @@ export function SkillsCard() {
     }
   };
 
-  const filtered = skills.filter((s) => {
-    if (filter === "eligible" && !s.eligible) return false;
-    if (filter === "disabled" && !s.disabled) return false;
-    if (filter === "missing" && s.eligible) return false;
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      return (
-        s.name.toLowerCase().includes(q) ||
-        s.description.toLowerCase().includes(q)
-      );
-    }
-    return true;
+  // Hide bundled skills that are not eligible (missing system deps the user can't fix)
+  // Show: all user-installed skills + eligible bundled skills
+  const visible = skills.filter((s) => !s.bundled || s.eligible);
+
+  const filtered = visible.filter((s) => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    const dirName = (s.dirName || "").toLowerCase();
+    return (
+      s.name.toLowerCase().includes(q) ||
+      dirName.includes(q) ||
+      s.description.toLowerCase().includes(q) ||
+      (s.emoji && s.emoji.toLowerCase().includes(q)) ||
+      s.source.toLowerCase().includes(q)
+    );
   });
 
-  const missingCount = total - eligibleCount;
-
   return (
-    <div>
+    <div className="flex flex-col flex-1 min-h-0">
       {/* Section label */}
-      <div className="flex items-center justify-between px-4 mb-1.5">
+      <div className="shrink-0 flex items-center justify-between px-4 mb-1.5">
         <p className="text-[13px] text-[hsl(var(--muted-foreground))] uppercase tracking-wide">
           {t("skills.title")}
-          {!loading && total > 0 && (
-            <span className="ml-1.5 normal-case tracking-normal">{total}</span>
+          {!loading && visible.length > 0 && (
+            <span className="ml-1.5 normal-case tracking-normal">{visible.length}</span>
           )}
         </p>
         <div className="flex items-center gap-2.5">
-          {!loading && total > 0 && (
-            <>
-              <span className="text-[12px] text-[hsl(var(--success))]">{eligibleCount} {t("skills.eligible")}</span>
-              {missingCount > 0 && (
-                <span className="text-[12px] text-[hsl(var(--warning))]">{missingCount} {t("skills.missingDep")}</span>
-              )}
-            </>
-          )}
           <button
             onClick={() => setShowCreate((v) => !v)}
             className="text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--primary))] transition-colors"
@@ -332,29 +327,10 @@ export function SkillsCard() {
         </div>
       </div>
 
-      <div className="apple-group">
-        {/* Filter tabs */}
-        {total > 0 && (
-          <div className="flex gap-0.5 px-3 py-2.5 rounded-[9px]">
-            {(Object.keys(FILTER_LABELS) as SkillFilter[]).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={cn(
-                  "text-[13px] px-2.5 py-1 rounded-[7px] transition-colors",
-                  filter === f
-                    ? "bg-[hsl(var(--primary))]/12 text-[hsl(var(--primary))] font-medium"
-                    : "text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
-                )}
-              >
-                {FILTER_LABELS[f]}
-              </button>
-            ))}
-          </div>
-        )}
+      <div className="flex flex-col flex-1 min-h-0 bg-[hsl(var(--card))] rounded-[12px]">
 
         {/* Search */}
-        {total > 10 && (
+        {visible.length > 10 && (
           <div className="px-3 py-2.5">
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[hsl(var(--muted-foreground))]" />
@@ -615,9 +591,10 @@ export function SkillsCard() {
         {/* Error */}
         {error && <div className="px-4 py-3 text-[15px] text-[hsl(var(--destructive))]">{error}</div>}
 
-        {/* Skills list */}
+        {/* Skills list — fill remaining height */}
         {filtered.length > 0 && (
-          <div className="max-h-80 overflow-y-auto">
+          <div className="relative flex-1 min-h-0">
+          <div className="absolute inset-0 overflow-y-auto divide-y divide-[hsl(var(--border))]">
             {filtered.map((skill) => (
               <SkillRow
                 key={skill.name}
@@ -634,20 +611,23 @@ export function SkillsCard() {
                 onExpand={() => handleExpand(skill.name)}
                 onInstall={(installId) => installDep(skill.name, installId)}
                 onDismissInstall={dismissInstall}
+                uninstalling={uninstallingSkill === skill.name}
+                onUninstall={() => handleUninstall(skill.name)}
               />
             ))}
+          </div>
           </div>
         )}
 
         {/* Empty after filter */}
-        {!loading && filtered.length === 0 && total > 0 && (
+        {!loading && filtered.length === 0 && visible.length > 0 && (
           <div className="py-6 text-center text-[15px] text-[hsl(var(--muted-foreground))]">
             {t("skills.noMatch")}
           </div>
         )}
 
         {/* Empty: no skills at all */}
-        {!loading && total === 0 && !error && (
+        {!loading && visible.length === 0 && !error && (
           <div className="px-4 py-6 flex flex-col items-center gap-2 text-center">
             <p className="text-[15px] text-[hsl(var(--muted-foreground))]">
               {t("skills.noSkills")}
@@ -676,6 +656,8 @@ interface SkillRowProps {
   onExpand: () => void;
   onInstall: (installId: string) => void;
   onDismissInstall: () => void;
+  uninstalling: boolean;
+  onUninstall: () => void;
 }
 
 function SkillRow({
@@ -690,6 +672,8 @@ function SkillRow({
   onExpand,
   onInstall,
   onDismissInstall,
+  uninstalling,
+  onUninstall,
 }: SkillRowProps) {
   const t = useT();
 
@@ -704,8 +688,8 @@ function SkillRow({
       </Badge>
     )
   ) : (
-    <Badge variant="muted" className="text-[11px] py-0">
-      {t("skills.badgeUnavailable")}
+    <Badge variant="warning" className="text-[11px] py-0">
+      {t("skills.badgeNeedSetup")}
     </Badge>
   );
 
@@ -718,30 +702,32 @@ function SkillRow({
       skill.missing.os.length > 0);
 
   return (
-    <div>
-      {/* Main row */}
+    <div className="hover:bg-[hsl(var(--background))] transition-colors">
+      {/* Main row — consistent with market style */}
       <div
-        className="apple-row cursor-pointer hover:bg-[hsl(var(--background))] transition-colors"
+        className="flex items-center justify-between px-4 py-3 cursor-pointer"
         onClick={onExpand}
       >
-        <div className="flex items-center gap-3 flex-1 min-w-0">
-          {expanded ? (
-            <ChevronDown className="w-4 h-4 text-[hsl(var(--muted-foreground))] shrink-0" />
-          ) : (
-            <ChevronRight className="w-4 h-4 text-[hsl(var(--muted-foreground))] shrink-0" />
-          )}
-          <span className="text-[17px] shrink-0">{skill.emoji ?? "📦"}</span>
-          <div className="flex-1 min-w-0">
-            <span className="text-[17px] font-medium truncate block">
-              {skill.name}
-            </span>
-            <span className="text-[13px] text-[hsl(var(--muted-foreground))] truncate block">
-              {skill.description.trim()}
-            </span>
+        <div className="flex-1 min-w-0 mr-3">
+          <div className="flex items-center gap-2">
+            <span className="text-[15px] font-medium truncate">{skill.name}</span>
+            {statusBadge}
           </div>
+          <p className={cn(
+            "text-[13px] text-[hsl(var(--muted-foreground))] mt-0.5",
+            !expanded && "truncate"
+          )}>
+            {skill.description.trim()}
+          </p>
+          {!expanded && (
+            <div className="flex items-center gap-3 mt-1">
+              <span className="text-[11px] text-[hsl(var(--muted-foreground))]">
+                {skill.source}
+              </span>
+            </div>
+          )}
         </div>
-        <div className="flex items-center gap-2.5 shrink-0">
-          {statusBadge}
+        <div className="flex items-center gap-2 shrink-0">
           {skill.eligible && (
             <button
               onClick={(e) => {
@@ -766,7 +752,7 @@ function SkillRow({
 
       {/* Expanded detail */}
       {expanded && (
-        <div className="px-4 pb-3 pt-0 ml-9 space-y-1.5">
+        <div className="px-4 pb-3 pt-0 space-y-1.5">
           <DetailLine label={t("skills.source")} value={skill.source} />
           {hasMissing && (
             <div className="space-y-1">
@@ -837,14 +823,34 @@ function SkillRow({
               {t("skills.closeLogs")}
             </button>
           )}
-          {skill.homepage && (
-            <button
-              onClick={() => openUrl(skill.homepage!)}
-              className="inline-flex items-center gap-1.5 text-[14px] text-[hsl(var(--primary))] hover:underline"
-            >
-              <ExternalLink className="w-3.5 h-3.5" /> {t("skills.docs")}
-            </button>
-          )}
+          <div className="flex items-center gap-3 pt-1">
+            {skill.homepage && (
+              <button
+                onClick={() => openUrl(skill.homepage!)}
+                className="inline-flex items-center gap-1.5 text-[14px] text-[hsl(var(--primary))] hover:underline"
+              >
+                <ExternalLink className="w-3.5 h-3.5" /> {t("skills.docs")}
+              </button>
+            )}
+            {/* Uninstall — only for non-bundled skills (managed, extra, personal, etc.) */}
+            {!skill.bundled && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!uninstalling) onUninstall();
+                }}
+                disabled={uninstalling}
+                className="inline-flex items-center gap-1.5 text-[13px] text-red-500 hover:text-red-700 transition-colors"
+              >
+                {uninstalling ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                {uninstalling ? t("skills.uninstalling") : t("skills.uninstall")}
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

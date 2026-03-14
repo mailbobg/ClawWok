@@ -1,5 +1,5 @@
 import { useWizard } from "@/store/wizard";
-import { ArrowRight, Settings2, Globe } from "lucide-react";
+import { ArrowRight, Settings2, Globe, Store } from "lucide-react";
 import { useT, useI18n } from "@/i18n";
 
 export function Step0_Welcome() {
@@ -63,11 +63,27 @@ export function Step0_Welcome() {
           </div>
           <ArrowRight className="w-4 h-4 text-[hsl(var(--muted-foreground))]/40" />
         </button>
+
+        <button
+          onClick={() => setAppMode("skills")}
+          className="apple-row w-full hover:bg-[hsl(var(--background))] transition-colors cursor-pointer group"
+        >
+          <div className="flex items-center gap-3.5">
+            <div className="w-[34px] h-[34px] rounded-[8px] bg-[hsl(32,82%,52%)] flex items-center justify-center">
+              <Store className="w-[18px] h-[18px] text-white" />
+            </div>
+            <div className="text-left">
+              <div className="text-[17px] font-medium text-[hsl(var(--foreground))]">{t("welcome.skills")}</div>
+              <div className="text-[13px] text-[hsl(var(--muted-foreground))] mt-0.5">{t("welcome.skillsDesc")}</div>
+            </div>
+          </div>
+          <ArrowRight className="w-4 h-4 text-[hsl(var(--muted-foreground))]/40" />
+        </button>
       </div>
 
       <div className="flex items-center gap-3">
         <p className="text-[13px] text-[hsl(var(--muted-foreground))]">
-          v0.1.0 · Internal Use Only
+          v0.1.1 · Internal Use Only
         </p>
         <button
           onClick={toggleLang}

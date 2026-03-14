@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::process::Command;
 
 const EXTRA_PATHS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
@@ -340,5 +341,342 @@ pub fn cancel_whatsapp_login() -> Result<(), String> {
         .args(["-f", "openclaw channels login"])
         .output()
         .ok();
+    Ok(())
+}
+
+// ─── QQ Relay Deploy (Vercel CLI) ────────────────────────────────────────────
+
+// Embedded relay source files
+const RELAY_QQ_TS: &str = include_str!("../../../qq-relay/api/qq.ts");
+const RELAY_POLL_TS: &str = include_str!("../../../qq-relay/api/poll.ts");
+const RELAY_PACKAGE_JSON: &str = include_str!("../../../qq-relay/package.json");
+const RELAY_VERCEL_JSON: &str = include_str!("../../../qq-relay/vercel.json");
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeployResult {
+    pub ok: bool,
+    pub url: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Deploy QQ relay to Vercel via CLI.
+/// Writes embedded relay files to a temp directory, runs `npx vercel deploy`,
+/// sets environment variables, then redeploys to production.
+/// Streams progress via "qq_deploy_log" events.
+#[tauri::command]
+pub async fn deploy_qq_relay(
+    app: tauri::AppHandle,
+    qq_bot_secret: String,
+    relay_token: String,
+) -> Result<DeployResult, String> {
+    use tauri::Emitter;
+
+    let emit = |kind: &str, text: &str| {
+        app.emit(
+            "qq_deploy_log",
+            serde_json::json!({ "kind": kind, "text": text }),
+        )
+        .ok();
+    };
+
+    // 1. Create temp directory with relay files
+    emit("log", "准备中转服务文件...");
+    let tmp_dir = std::env::temp_dir().join("openclaw-qq-relay");
+    let api_dir = tmp_dir.join("api");
+    fs::create_dir_all(&api_dir).map_err(|e| format!("创建临时目录失败: {}", e))?;
+
+    fs::write(api_dir.join("qq.ts"), RELAY_QQ_TS)
+        .map_err(|e| format!("写入 qq.ts 失败: {}", e))?;
+    fs::write(api_dir.join("poll.ts"), RELAY_POLL_TS)
+        .map_err(|e| format!("写入 poll.ts 失败: {}", e))?;
+    fs::write(tmp_dir.join("package.json"), RELAY_PACKAGE_JSON)
+        .map_err(|e| format!("写入 package.json 失败: {}", e))?;
+    fs::write(tmp_dir.join("vercel.json"), RELAY_VERCEL_JSON)
+        .map_err(|e| format!("写入 vercel.json 失败: {}", e))?;
+
+    emit("log", "文件就绪 ✓");
+
+    // 2. First deploy (preview) — this creates the project on Vercel
+    emit("log", "正在部署到 Vercel（首次可能需要浏览器登录）...");
+
+    let npx = find_npx();
+    let deploy_output = run_streaming_command(
+        &npx,
+        &["vercel", "deploy", "--yes"],
+        &tmp_dir,
+        &app,
+        "qq_deploy_log",
+    )?;
+
+    // Extract preview URL from output (last line is typically the URL)
+    let preview_url = deploy_output
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("https://"))
+        .map(|s| s.trim().to_string());
+
+    if preview_url.is_none() {
+        emit("error", "未能获取部署 URL，请检查 Vercel 登录状态");
+        return Ok(DeployResult {
+            ok: false,
+            url: None,
+            error: Some("部署失败：未获取到 URL".into()),
+        });
+    }
+    emit("log", &format!("Preview 部署完成: {}", preview_url.as_ref().unwrap()));
+
+    // 3. Set environment variables
+    emit("log", "正在设置环境变量...");
+    set_vercel_env(&npx, &tmp_dir, "QQ_BOT_SECRET", &qq_bot_secret)?;
+    emit("log", "QQ_BOT_SECRET ✓");
+    set_vercel_env(&npx, &tmp_dir, "RELAY_TOKEN", &relay_token)?;
+    emit("log", "RELAY_TOKEN ✓");
+
+    // 4. Production deploy
+    emit("log", "正在部署到生产环境...");
+    let prod_output = run_streaming_command(
+        &npx,
+        &["vercel", "deploy", "--prod", "--yes"],
+        &tmp_dir,
+        &app,
+        "qq_deploy_log",
+    )?;
+
+    let prod_url = prod_output
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("https://"))
+        .map(|s| s.trim().to_string());
+
+    if let Some(ref url) = prod_url {
+        emit("success", &format!("部署成功 ✓ {}", url));
+        Ok(DeployResult {
+            ok: true,
+            url: prod_url,
+            error: None,
+        })
+    } else {
+        // Fallback: use the preview URL domain as production URL
+        let fallback = preview_url.as_ref().and_then(|u| {
+            // Preview URL is like https://project-xxx.vercel.app
+            // Production URL is the project name: https://project.vercel.app
+            // We can't reliably derive it, so return the preview URL
+            Some(u.clone())
+        });
+        emit("success", "部署完成 ✓（请在 Vercel Dashboard 查看生产 URL）");
+        Ok(DeployResult {
+            ok: true,
+            url: fallback,
+            error: None,
+        })
+    }
+}
+
+fn find_npx() -> String {
+    for dir in EXTRA_PATHS {
+        let p = format!("{}/npx", dir);
+        if std::path::Path::new(&p).exists() {
+            return p;
+        }
+    }
+    "npx".to_string()
+}
+
+/// Run a command, stream stdout/stderr via Tauri events, return combined stdout
+fn run_streaming_command(
+    program: &str,
+    args: &[&str],
+    cwd: &std::path::Path,
+    app: &tauri::AppHandle,
+    event_name: &str,
+) -> Result<String, String> {
+    use std::io::{BufRead, BufReader};
+    use tauri::Emitter;
+
+    let mut child = std::process::Command::new(program)
+        .args(args)
+        .current_dir(cwd)
+        .env("PATH", full_path_env())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("启动 {} 失败: {}", program, e))?;
+
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    let app_out = app.clone();
+    let event_out = event_name.to_string();
+    let stdout_handle = std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        let mut output = String::new();
+        for line in reader.lines().flatten() {
+            let clean = strip_ansi(&line);
+            let text = clean.trim().to_string();
+            if !text.is_empty() {
+                app_out
+                    .emit(&event_out, serde_json::json!({ "kind": "log", "text": text }))
+                    .ok();
+                output.push_str(&text);
+                output.push('\n');
+            }
+        }
+        output
+    });
+
+    let app_err = app.clone();
+    let event_err = event_name.to_string();
+    let stderr_handle = std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().flatten() {
+            let clean = strip_ansi(&line);
+            let text = clean.trim().to_string();
+            if !text.is_empty() {
+                app_err
+                    .emit(&event_err, serde_json::json!({ "kind": "log", "text": text }))
+                    .ok();
+            }
+        }
+    });
+
+    let status = child.wait().map_err(|e| e.to_string())?;
+    let output = stdout_handle.join().unwrap_or_default();
+    stderr_handle.join().ok();
+
+    if !status.success() {
+        return Err(format!("命令退出码: {:?}", status.code()));
+    }
+
+    Ok(output)
+}
+
+// ─── Clawin (openclaw-app) ────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ClawinSaveResult {
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+/// Save Clawin (openclaw-app) config:
+///   1. Uninstall old plugin (if exists)
+///   2. Install openclaw-app@1.2.2
+///   3. Set roomId, relayUrl, enabled=true
+///   4. Restart gateway
+#[tauri::command]
+pub async fn save_clawin_config(
+    app: tauri::AppHandle,
+    room_id: String,
+    relay_url: String,
+) -> Result<ClawinSaveResult, String> {
+    use tauri::Emitter;
+
+    let emit = |kind: &str, text: &str| {
+        app.emit(
+            "clawin_log",
+            serde_json::json!({ "kind": kind, "text": text }),
+        )
+        .ok();
+    };
+
+    let bin = openclaw_bin();
+    let path_env = full_path_env();
+
+    // 1. Uninstall old plugin (ignore errors)
+    emit("log", "卸载旧插件（如有）...");
+    let _ = Command::new(&bin)
+        .args(["plugins", "uninstall", "openclaw-app"])
+        .env("PATH", &path_env)
+        .output();
+
+    // 2. Install openclaw-app@1.2.2
+    emit("log", "安装 openclaw-app@1.2.2 ...");
+    let install = Command::new(&bin)
+        .args(["plugins", "install", "openclaw-app@1.2.2"])
+        .env("PATH", &path_env)
+        .output()
+        .map_err(|e| format!("安装插件失败: {}", e))?;
+
+    if !install.status.success() {
+        let err = String::from_utf8_lossy(&install.stderr).trim().to_string();
+        emit("error", &format!("安装失败: {}", err));
+        return Ok(ClawinSaveResult {
+            ok: false,
+            error: Some(err),
+        });
+    }
+    emit("log", "插件安装完成 ✓");
+
+    // 3. Set config values
+    let configs = [
+        ("channels.openclaw-app.accounts.default.roomId", room_id.as_str()),
+        ("channels.openclaw-app.accounts.default.relayUrl", relay_url.as_str()),
+        ("channels.openclaw-app.accounts.default.enabled", "true"),
+    ];
+
+    for (key, val) in &configs {
+        emit("log", &format!("设置 {} ...", key.rsplit('.').next().unwrap_or(key)));
+        let r = Command::new(&bin)
+            .args(["config", "set", key, val])
+            .env("PATH", &path_env)
+            .output()
+            .map_err(|e| format!("config set {} 失败: {}", key, e))?;
+
+        if !r.status.success() {
+            let err = String::from_utf8_lossy(&r.stderr).trim().to_string();
+            emit("error", &format!("设置失败: {}", err));
+            return Ok(ClawinSaveResult {
+                ok: false,
+                error: Some(err),
+            });
+        }
+    }
+    emit("log", "配置写入完成 ✓");
+
+    // 4. Restart gateway
+    emit("log", "正在重启 Gateway ...");
+    let _ = Command::new(&bin)
+        .args(["gateway", "restart"])
+        .env("PATH", &path_env)
+        .output();
+
+    emit("success", "Clawin 配置完成 ✓ 请等待约 30 秒后回到 Clawin App 完成连接");
+    Ok(ClawinSaveResult {
+        ok: true,
+        error: None,
+    })
+}
+
+/// Set a Vercel environment variable by piping value to stdin
+fn set_vercel_env(
+    npx: &str,
+    cwd: &std::path::Path,
+    name: &str,
+    value: &str,
+) -> Result<(), String> {
+    use std::io::Write;
+
+    let mut child = std::process::Command::new(npx)
+        .args(["vercel", "env", "add", name, "production", "--force"])
+        .current_dir(cwd)
+        .env("PATH", full_path_env())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("vercel env add 失败: {}", e))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(value.as_bytes()).ok();
+        stdin.write_all(b"\n").ok();
+    }
+
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(format!("设置 {} 失败: {}", name, err));
+    }
+
     Ok(())
 }

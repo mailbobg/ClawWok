@@ -1,0 +1,14 @@
+{
+  "functions": {
+    "api/qq.ts": {
+      "maxDuration": 10
+    },
+    "api/poll.ts": {
+      "maxDuration": 10
+    }
+  },
+  "rewrites": [
+    { "source": "/api/qq", "destination": "/api/qq" },
+    { "source": "/api/poll", "destination": "/api/poll" }
+  ]
+}
