@@ -559,10 +559,15 @@ pub struct ClawinSaveResult {
 }
 
 /// Save Clawin (openclaw-app) config:
-///   1. Uninstall old plugin (if exists)
-///   2. Install openclaw-app@1.2.2
-///   3. Set roomId, relayUrl, enabled=true
-///   4. Restart gateway
+///   1. Clean stale config entries from openclaw.json (prevents "unknown channel" error)
+///   2. Remove leftover plugin directory
+///   3. Install openclaw-app@1.2.2
+///   4. Set roomId, relayUrl, enabled=true via CLI
+///   5. Restart gateway
+///
+/// Key insight: if `channels.openclaw-app` exists in openclaw.json but the plugin
+/// is not installed, OpenClaw treats the config as invalid and refuses to run ANY
+/// command (including `plugins install`). So we must edit the JSON directly first.
 #[tauri::command]
 pub async fn save_clawin_config(
     app: tauri::AppHandle,
@@ -581,26 +586,50 @@ pub async fn save_clawin_config(
 
     let bin = openclaw_bin();
     let path_env = full_path_env();
-
-    // 1. Uninstall old plugin (ignore errors) and remove leftover directory
-    emit("log", "卸载旧插件（如有）...");
-    let _ = Command::new(&bin)
-        .args(["plugins", "uninstall", "openclaw-app"])
-        .env("PATH", &path_env)
-        .output();
-
-    // Force-remove the plugin directory if it still exists
-    let plugin_dir = dirs::home_dir()
+    let oc_home = dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".openclaw")
-        .join("extensions")
-        .join("openclaw-app");
+        .join(".openclaw");
+    let config_path = oc_home.join("openclaw.json");
+    let plugin_dir = oc_home.join("extensions").join("openclaw-app");
+
+    // ── Step 1: Remove stale config entries that block all CLI commands ──
+    emit("log", "清理旧配置...");
+    if config_path.exists() {
+        if let Ok(content) = fs::read_to_string(&config_path) {
+            if let Ok(mut cfg) = serde_json::from_str::<serde_json::Value>(&content) {
+                let mut changed = false;
+                // Remove channels.openclaw-app if present
+                if let Some(channels) = cfg.get_mut("channels") {
+                    if let Some(obj) = channels.as_object_mut() {
+                        if obj.remove("openclaw-app").is_some() {
+                            emit("log", "移除残留 channels.openclaw-app");
+                            changed = true;
+                        }
+                    }
+                }
+                // Remove plugins.entries.openclaw-app if present
+                if let Some(entries) = cfg.pointer_mut("/plugins/entries") {
+                    if let Some(obj) = entries.as_object_mut() {
+                        if obj.remove("openclaw-app").is_some() {
+                            emit("log", "移除残留 plugins.entries.openclaw-app");
+                            changed = true;
+                        }
+                    }
+                }
+                if changed {
+                    let _ = fs::write(&config_path, serde_json::to_string_pretty(&cfg).unwrap());
+                }
+            }
+        }
+    }
+
+    // ── Step 2: Remove leftover plugin directory ──
     if plugin_dir.exists() {
         emit("log", "清理残留插件目录...");
         let _ = fs::remove_dir_all(&plugin_dir);
     }
 
-    // 2. Install openclaw-app@1.2.2
+    // ── Step 3: Install openclaw-app plugin (config is now valid) ──
     emit("log", "安装 openclaw-app@1.2.2 ...");
     let install = Command::new(&bin)
         .args(["plugins", "install", "openclaw-app@1.2.2"])
@@ -609,14 +638,13 @@ pub async fn save_clawin_config(
         .map_err(|e| format!("安装插件失败: {}", e))?;
 
     if !install.status.success() {
-        let err = String::from_utf8_lossy(&install.stderr).trim().to_string();
-        // If still failing due to directory, try once more after forced cleanup
-        let stderr_combined = format!(
+        let err_out = format!(
             "{} {}",
-            err,
+            String::from_utf8_lossy(&install.stderr).trim(),
             String::from_utf8_lossy(&install.stdout).trim()
         );
-        if stderr_combined.contains("already exists") || stderr_combined.contains("delete it first") {
+        // If directory somehow still exists, force-remove and retry once
+        if err_out.contains("already exists") || err_out.contains("delete it first") {
             emit("log", "再次清理并重试安装...");
             let _ = fs::remove_dir_all(&plugin_dir);
             let retry = Command::new(&bin)
@@ -628,25 +656,19 @@ pub async fn save_clawin_config(
                     emit("log", "插件安装完成 ✓（重试成功）");
                 }
                 _ => {
-                    emit("error", &format!("安装失败: {}", err));
-                    return Ok(ClawinSaveResult {
-                        ok: false,
-                        error: Some(err),
-                    });
+                    emit("error", &format!("安装失败: {}", err_out));
+                    return Ok(ClawinSaveResult { ok: false, error: Some(err_out) });
                 }
             }
         } else {
-            emit("error", &format!("安装失败: {}", err));
-            return Ok(ClawinSaveResult {
-                ok: false,
-                error: Some(err),
-            });
+            emit("error", &format!("安装失败: {}", err_out));
+            return Ok(ClawinSaveResult { ok: false, error: Some(err_out) });
         }
     } else {
         emit("log", "插件安装完成 ✓");
     }
 
-    // 3. Set config values
+    // ── Step 4: Set config values via CLI (plugin is now registered) ──
     let configs = [
         ("channels.openclaw-app.accounts.default.roomId", room_id.as_str()),
         ("channels.openclaw-app.accounts.default.relayUrl", relay_url.as_str()),
@@ -664,15 +686,12 @@ pub async fn save_clawin_config(
         if !r.status.success() {
             let err = String::from_utf8_lossy(&r.stderr).trim().to_string();
             emit("error", &format!("设置失败: {}", err));
-            return Ok(ClawinSaveResult {
-                ok: false,
-                error: Some(err),
-            });
+            return Ok(ClawinSaveResult { ok: false, error: Some(err) });
         }
     }
     emit("log", "配置写入完成 ✓");
 
-    // 4. Restart gateway
+    // ── Step 5: Restart gateway ──
     emit("log", "正在重启 Gateway ...");
     let _ = Command::new(&bin)
         .args(["gateway", "restart"])
@@ -680,10 +699,7 @@ pub async fn save_clawin_config(
         .output();
 
     emit("success", "Clawin 配置完成 ✓ 请等待约 30 秒后回到 Clawin App 完成连接");
-    Ok(ClawinSaveResult {
-        ok: true,
-        error: None,
-    })
+    Ok(ClawinSaveResult { ok: true, error: None })
 }
 
 /// Set a Vercel environment variable by piping value to stdin
