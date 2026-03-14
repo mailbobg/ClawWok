@@ -582,12 +582,23 @@ pub async fn save_clawin_config(
     let bin = openclaw_bin();
     let path_env = full_path_env();
 
-    // 1. Uninstall old plugin (ignore errors)
+    // 1. Uninstall old plugin (ignore errors) and remove leftover directory
     emit("log", "卸载旧插件（如有）...");
     let _ = Command::new(&bin)
         .args(["plugins", "uninstall", "openclaw-app"])
         .env("PATH", &path_env)
         .output();
+
+    // Force-remove the plugin directory if it still exists
+    let plugin_dir = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".openclaw")
+        .join("extensions")
+        .join("openclaw-app");
+    if plugin_dir.exists() {
+        emit("log", "清理残留插件目录...");
+        let _ = fs::remove_dir_all(&plugin_dir);
+    }
 
     // 2. Install openclaw-app@1.2.2
     emit("log", "安装 openclaw-app@1.2.2 ...");
@@ -599,13 +610,41 @@ pub async fn save_clawin_config(
 
     if !install.status.success() {
         let err = String::from_utf8_lossy(&install.stderr).trim().to_string();
-        emit("error", &format!("安装失败: {}", err));
-        return Ok(ClawinSaveResult {
-            ok: false,
-            error: Some(err),
-        });
+        // If still failing due to directory, try once more after forced cleanup
+        let stderr_combined = format!(
+            "{} {}",
+            err,
+            String::from_utf8_lossy(&install.stdout).trim()
+        );
+        if stderr_combined.contains("already exists") || stderr_combined.contains("delete it first") {
+            emit("log", "再次清理并重试安装...");
+            let _ = fs::remove_dir_all(&plugin_dir);
+            let retry = Command::new(&bin)
+                .args(["plugins", "install", "openclaw-app@1.2.2"])
+                .env("PATH", &path_env)
+                .output();
+            match retry {
+                Ok(r) if r.status.success() => {
+                    emit("log", "插件安装完成 ✓（重试成功）");
+                }
+                _ => {
+                    emit("error", &format!("安装失败: {}", err));
+                    return Ok(ClawinSaveResult {
+                        ok: false,
+                        error: Some(err),
+                    });
+                }
+            }
+        } else {
+            emit("error", &format!("安装失败: {}", err));
+            return Ok(ClawinSaveResult {
+                ok: false,
+                error: Some(err),
+            });
+        }
+    } else {
+        emit("log", "插件安装完成 ✓");
     }
-    emit("log", "插件安装完成 ✓");
 
     // 3. Set config values
     let configs = [
